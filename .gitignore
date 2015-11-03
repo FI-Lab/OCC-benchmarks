@@ -1,7 +1,5 @@
 *.fib
 
-/dt_search
-
-acl*
+*.o
 
 l2fwd_clf
