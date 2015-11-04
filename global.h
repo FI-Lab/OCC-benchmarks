@@ -19,6 +19,8 @@ typedef struct global_param_s
 
     char rule_file[REGULAR_FILE_NAME_MAX_LEN];
     char fib_file[REGULAR_FILE_NAME_MAX_LEN];
+
+    char pat_file[REGULAR_FILE_NAME_MAX_LEN];
     
 }global_param_t;
 

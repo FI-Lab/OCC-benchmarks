@@ -13,13 +13,17 @@
 #include <odp/helper/linux.h>
 #include <odp/helper/udp.h>
 #include <odp/helper/ip.h>
+#include <odp/helper/tcp.h>
 
 #include "global.h"
 #include "pc.h"
 #include "hash_lkup.h"
 
+#include "ac/sm_builder.h"
+
 #define EXECUTE_HASH_LOOKUP
 #define EXECUTE_CLASSIFICATION
+#define EXECUTE_DPI
 
 /***************************/
 global_param_t glb_param;
@@ -71,6 +75,9 @@ void parse_param(int argc, char **argv)
             case 'l':
                 memcpy(glb_param.fib_file, optarg, strlen(optarg) + 1);
                 break;
+            case 'k':
+                memcpy(glb_param.pat_file, optarg, strlen(optarg) + 1);
+                break;
             default:
                 usage();
                 exit(EXIT_FAILURE);
@@ -97,6 +104,7 @@ thread_data_t thr_data;
 port_stat_t port_stat;
 
 odph_hash_t hs_tbl;
+sm_hdl_t *sm_hdl;
 
 int init_all_if(odp_pool_t pkt_pool)
 {
@@ -167,6 +175,41 @@ int extract_tuple(odp_packet_t pkt, uint32_t ft[5])
     return 0;
 }
 
+
+int get_payload(odp_packet_t pkt, unsigned char **payload, int *len)
+{
+    odph_ipv4hdr_t *ip;
+    int payload_offset;
+    ip = (odph_ipv4hdr_t*)odp_packet_l3_ptr(pkt, NULL);
+    if(ip == NULL)
+    {
+    	fprintf(stderr, "recv non-ip packet!\n");
+        return -1;
+    }
+    payload_offset = (ip->ver_ihl & 0xf) << 2;
+    if(ip->proto == 6)//TCP
+    {
+        odph_tcphdr_t *tcp;
+        tcp = (odph_tcphdr_t*)odp_packet_l4_ptr(pkt, NULL);
+        //printf("%d\n", (tcp->hl & 0xf) << 2);
+        payload_offset += (tcp->hl & 0xf) << 2;
+        *len = ntohs(ip->tot_len) - payload_offset;
+        *payload = (unsigned char*)ip + payload_offset;
+        //printf("payload %s\n", (char*)*payload);
+	//printf("len %d\n", *len);
+        return 0;
+    }
+    else if(ip->proto == 17)
+    {
+    	payload_offset += 8;
+        *len = ntohs(ip->tot_len) - payload_offset;
+        *payload = (unsigned char*)ip + payload_offset;
+        return 0;
+    }
+    fprintf(stderr, "recv non-tcp/udp packet!\n");
+    return -1;
+}
+
 /***********************/
 void* thread_fwd_routine(void *arg)
 {
@@ -205,6 +248,20 @@ void* thread_fwd_routine(void *arg)
             {
                 int res;
                 res = odph_hash_lookup(hs_tbl, (void*)tuple);
+            }
+        }
+#endif
+#ifdef EXECUTE_DPI
+        unsigned char *payload;
+        int payload_len;
+        for(i = 0; i < rv_nb; i++)
+        {
+            if(get_payload(pkt_tbl[i], (unsigned char**)&payload, &payload_len) == 0)
+            {
+                int res;
+		//printf("%d %d %s\n", thr_id, strlen(payload), payload);
+                res = sm_search(sm_hdl, payload, payload_len);
+                //printf("search res: %d\n", res);
             }
         }
 #endif
@@ -269,6 +326,7 @@ int main(int argc, char **argv)
 
     packet_classifier_init(glb_param.rule_file, glb_param.fib_file);
     hash_env_init();
+    sm_hdl = sm_build(glb_param.pat_file);
 
     hs_tbl = create_hash_table();
 
@@ -316,6 +374,7 @@ int main(int argc, char **argv)
     {
         odp_pktio_close(thr_data.nic_hdl[nic_id]);
     }
+    sm_destroy(sm_hdl);
     odph_hash_free(hs_tbl);
     odp_pool_destroy(pkt_pool);
 
