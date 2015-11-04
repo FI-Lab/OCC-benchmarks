@@ -1294,7 +1294,6 @@ struct anode* convert_to_abc_tree(struct tree_info* info)
 
 #endif
 
-#if 0
 int main(int argc, char *argv[])
 {
     printf("node size %d\n", sizeof(struct node));
@@ -1325,7 +1324,7 @@ int main(int argc, char *argv[])
 
 
 
-#if 1
+#if 0
     int ret;
     int ret2;
     int trace_no = 0;
@@ -1356,7 +1355,7 @@ int main(int argc, char *argv[])
         printf("matching finished\n");
     }
 #endif
-#if 0 
+#if 1 
     uint32_t *ft = (uint32_t *)malloc(1000000 * MAXDIMENSIONS * sizeof(uint32_t));
     int i = 0;
     int trace_cnt = 0;
@@ -1402,73 +1401,8 @@ int main(int argc, char *argv[])
     return 0;
 
 }
-#endif
 
 
-/********************************API implement*******************************************************/
-
-#if 0
-#define YFR_DEBUG
-#endif
-
-struct node *global_root;
-
-void packet_classifier_init(char *fpr_name, char *ifp_name)
-{
-	struct tree_info info;
-	fpr = fopen(fpr_name, "r");
-	ifp = fopen(ifp_name, "r");
-	rule_set_cnt = loadrules(fpr);
-#ifdef YFR_DEBUG
-	printf("load rules %d\n", rule_set_cnt);
-#endif
-	global_root = load_tree(ifp, &info);
-}
 
 
-int packet_classifier_search(uint32_t *ft)
-{
-	return search_rules(global_root, ft);
-}
 
-#if 0
-
-int main(int argc, char *argv[])
-{
-	packet_classifier_init("fw2_2_0.5_-0.1_10K", "fibfw2");
-#if 1
-	fpt = fopen("acl1_2_0.5_-0.1_1K_trace", "r");
-
-	//parseargs(argc,argv);
-	
-	int ret,ret2;
-	int trace_no = 0;
-	int flag = 0;
-	uint32_t ft[MAXDIMENSIONS];
-	
-	while((trace_no = load_ft(fpt, ft)) != 0)
-	{
-		if(trace_no == 30)
-		{
-			printf("here\n");
-		}
-		ret = packet_classifier_search(ft);
-		ret2 = g_linear_search(ft);
-		if(ret != ret2)
-		{
-			printf("ret %d ret2 %d\n", ret, ret2);
-			printf("trace no %d\n", trace_no);
-		}
-		if(!flag)
-			flag = 1;
-	}
-	
-	if(flag == 1)
-	{
-		printf("matching finished!\n");
-	}
-#endif	
-	return 0;
-}
-
-#endif

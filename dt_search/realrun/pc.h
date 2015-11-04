@@ -149,10 +149,5 @@ struct pc_rule{
     struct realrange field[MAXDIMENSIONS];
 };
 
-/*
-fpr_name : rule_set file
-ifp_name : fib file
-*/
-void packet_classifier_init(char *fpr_name, char *ifp_name);
 
-int packet_classifier_search(uint32_t *ft);
+
