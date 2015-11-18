@@ -176,7 +176,7 @@ int extract_tuple(odp_packet_t pkt, uint32_t ft[5])
 }
 
 
-int get_payload(odp_packet_t pkt, unsigned char **payload, int *len)
+int get_payload(struct rte_mbuf *pkt, unsigned char **payload, int *len)
 {
     odph_ipv4hdr_t *ip;
     int payload_offset;

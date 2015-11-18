@@ -1460,6 +1460,8 @@ void packet_classifier_init(char *fpr_name, char *ifp_name)
 	printf("load rules %d\n", rule_set_cnt);
 #endif
 	global_root = load_tree(ifp, &info);
+    fclose(fpr);
+    fclose(ifp);
 }
 
 

@@ -7,8 +7,8 @@
 #include "snort_debug.h"
 #include "util.h"
 
-//#define ACSM_MODE
-#define ACSM2_MODE
+#define ACSM_MODE
+//#define ACSM2_MODE
 
 #if defined(ACSM_MODE)
 typedef ACSM_STRUCT sm_hdl_t;

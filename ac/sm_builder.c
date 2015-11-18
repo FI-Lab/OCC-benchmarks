@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <assert.h>
 #include "sm_builder.h"
-
 
 int parse_binary(char *bin, unsigned char *pat, int *elt_num)
 {
@@ -54,14 +54,19 @@ sm_hdl_t* sm_build(char *pat_file)
 {
 	sm_hdl_t *hdl;
 #if defined(ACSM_MODE)
-	hdl = acsmNew(NULL, NULL, NULL);
+	assert((hdl = acsmNew(NULL, NULL, NULL)) != NULL);
 #elif defined(ACSM2_MODE)
-	hdl = acsmNew2(NULL, NULL, NULL);
+	assert((hdl = acsmNew2(NULL, NULL, NULL)) != NULL);
 #else
-	hdl = bnfaNew(NULL, NULL, NULL);
+	assert((hdl = bnfaNew(NULL, NULL, NULL)) != NULL);
 	hdl->bnfaMethod = 1;
 #endif
 	FILE *fp = fopen(pat_file, "r");
+    if(fp == NULL)
+    {
+        fprintf(stderr, "acsm build failed! file not exist! %s\n", pat_file);
+        exit(-1);
+    }
 	unsigned char pat[512];
 	char buf[512];
 	int pat_len;
@@ -88,7 +93,9 @@ sm_hdl_t* sm_build(char *pat_file)
 	//acsmPrintSummaryInfo2();
 #else
 	bnfaCompile(hdl, NULL, NULL);
+	bnfaPrintInfo(hdl);
 #endif
+    fclose(fp);
 	return hdl;
 }
 
