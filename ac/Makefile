@@ -1,24 +1,22 @@
-CFLAGS=-O3
-LDFLAGS=
-CC=gcc
 
-.PHONY:sub
+AC_SUB_OBJS := $(AC_OBJ:ac/%=%)
 
-sub: sm_builder.o acsmx.o acsmx2.o util.o bnfa_search.o
+$(AC_SUB_OBJS): %.o : %.c
+	$(CC) $(CFLAGS) $(INCLUDE_FILES) -c $< -o $@ $(LIBS)
 
-sm_builder.o:
-	$(CC) $(CFLAGS) -c sm_builder.c -o $@ $(LDFLAGS)
-
-acsmx.o:
-	$(CC) $(CFLAGS) -c acsmx.c -o $@ $(LDFLAGS)
-
-acsmx2.o:
-	$(CC) $(CFLAGS) -c acsmx2.c -o $@ $(LDFLAGS)
-
-util.o:
-	$(CC) $(CFLAGS) -c util.c -o $@ $(LDFLAGS)
-
-bnfa_search.o:
-	$(CC) $(CFLAGS) -c bnfa_search.c -o $@ $(LDFLAGS)
+#sm_builder.o:
+#	$(CC) $(CFLAGS) $(INCLUDE_FILES) -c sm_builder.c -o $@ $(LIBS)
+#
+#acsmx.o:
+#	$(CC) $(CFLAGS) $(INCLUDE_FILES) -c acsmx.c -o $@ $(LIBS)
+#
+#acsmx2.o:
+#	$(CC) $(CFLAGS) $(INCLUDE_FILES) -c acsmx2.c -o $@ $(LIBS)
+#
+#util.o:
+#	$(CC) $(CFLAGS) $(INCLUDE_FILES) -c util.c -o $@ $(LIBS)
+#
+#bnfa_search.o:
+#	$(CC) $(CFLAGS) $(INCLUDE_FILES) -c bnfa_search.c -o $@ $(LIBS)
 
 

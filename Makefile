@@ -1,15 +1,65 @@
-CFLAGS=-O3
-LDFLAGS=-lodp -lodphelper -lm
-CC=gcc
-OBJ=main.o pc.o hash_lkup.o sub
+#TARGET = $(notdir $(CURDIR)) 当前工作路径
+THIS_MAKEFILE=$(abspath $(firstword $(subst $(MAKEFILES),,$(MAKEFILE_LIST)))) 
+DIR = $(dir $(THIS_MAKEFILE))
+DIR_NAME = $(shell basename $(DIR))
+ROOT            = $(DIR)../..
 
-l2fwd_clf: $(OBJ)
-	$(CC) $(CFLAGS) main.o pc.o hash_lkup.o ./ac/sm_builder.o ./ac/acsmx.o ./ac/acsmx2.o ./ac/bnfa_search.o ./ac/util.o -o $@ $(LDFLAGS)
+#32位应用程序
+ifeq ("$(BUILD_DIR)", "build_32") 
+	GNU_PREFIX=arm-linux-gnueabi-
+	LIB_ODP=odp32
+	APP_OUT=$(DIR_NAME)_app32
+	CFLAGS=-O3 -D_GNU_SOURCE -mlittle-endian -lpthread -march=armv7-a  -D__arm32__
+else    
+	GNU_PREFIX = aarch64-linux-gnu-
+	LIB_ODP=odp
+	APP_OUT=$(DIR_NAME)_app
+	CFLAGS=-O3 -D_GNU_SOURCE -mlittle-endian -lpthread -march=armv8-a -mtune=cortex-a57 -mcpu=cortex-a57
+endif
 
-.PHONY: sub
-sub:
-	$(MAKE) -C ./ac
+CC                := $(GNU_PREFIX)gcc
+LD                := $(GNU_PREFIX)ld
+OBJDUMP           := $(GNU_PREFIX)objdump
+ECHO              := @echo
+
+SRCS          := $(wildcard $(DIR)*.c)
+
+OBJ_FILE      := $(SRCS:.c=.o)  
+I_OBJ_FILE    := $(SRCS:.c=.i)
+
+AC_OBJ := ac/sm_builder.o ac/acsmx.o ac/acsmx2.o ac/bnfa_search.o ac/util.o
+
+LIBS := -L$(ROOT)/$(BUILD_DIR)/bin/ -l$(LIB_ODP) -lpthread -ldl -lrt -lm
+
+INCLUDE_FILES      := -I$(DIR) \
+                     -I$(ROOT)/include \
+		     -I$(ROOT)/platform/linux-generic \
+                     -I$(ROOT)/platform/linux-generic/include \
+                     -I$(ROOT)/platform/linux-generic/include/odp/plat \
+                     -I$(ROOT)/platform/linux-hisilicon/include/odp \
+                     -I$(ROOT)/platform/linux-hisilicon/include \
+                     -I$(ROOT)/helper/include/odp/helper \
+                     -I$(ROOT)/helper/include \
+                     -I$(ROOT)/example \
+                     -I$(ROOT)/$(BUILD_DIR) 
+
+
+$(APP_OUT) :$(AC_OBJ) $(OBJ_FILE)
+	$(ECHO) "LD " $@;\
+	$(CC) $(LIBS) $(CFLAGS) -o $@ $^  
 
 clean:
-	rm -f *.o l2fwd_clf
-	rm -f ./ac/*.o
+	rm -f $(DIR)*.o $(DIR)*.d $(DIR)*.so $(DIR)$(APP_OUT) ac/*.o
+
+
+#当前模块的.o 的编译规则, 把 %.c 改成为 .i , 则为在代码目录生成 .i文件。
+$(OBJ_FILE) : %.o : %.c
+	$(ECHO) "CC " $(notdir $@);
+	$(CC)  $(CFLAGS) $(INCLUDE_FILES) -c -o $@ $<
+
+include ac/Makefile
+
+#加入 -C ，则增加注释
+$(I_OBJ_FILE) :%.i :%.c
+	$(ECHO) "CC " $@;
+	$(CC) $(CFLAGS) $(INCLUDE_FILES) $< -E -P -o $@
