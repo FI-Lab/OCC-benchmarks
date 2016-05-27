@@ -1,17 +1,14 @@
 #ifndef HASH_LOOK_UP_H
 #define HASH_LOOK_UP_H
 
+#include <odph_cuckootable.h>
 
-#include <odp/helper/hash.h>
-
-#define HASH_ENTRIES 100000
+#define HASH_ENTRIES 1000000
 #define FIVE_TUPLE_LEN 20
+#define VALUE_LEN 1
+#define VALUE_TAG 'Y'
 
-typedef struct odph_hash *odph_hash_t;
-typedef struct odph_hash_parameters odph_hash_param_t;
-
-void hash_env_init();
-
-odph_hash_t create_hash_table(void);
+odph_table_t create_hash_table(void);
+int odph_hash_lookup(odph_table_t, void*);
 
 #endif

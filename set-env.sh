@@ -28,4 +28,4 @@ else
     exit -1
 fi
 
-./build.sh
+make clean; make

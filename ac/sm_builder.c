@@ -85,15 +85,18 @@ sm_hdl_t* sm_build(char *pat_file)
 	}
 #if defined(ACSM_MODE)
 	acsmCompile(hdl, NULL, NULL);
-	//printf("%d\n", acsmPatternCount(hdl));
+	printf("%d\n", acsmPatternCount(hdl));
+    acsmPrintDetailInfo(hdl);
+    acsmPrintSummaryInfo();
 #elif defined(ACSM2_MODE)
 	acsmCompile2(hdl, NULL, NULL);
 	acsmPrintInfo2(hdl);
-	//acsmPrintDetailInfo2(hdl);
-	//acsmPrintSummaryInfo2();
+	acsmPrintDetailInfo2(hdl);
+	acsmPrintSummaryInfo2();
 #else
 	bnfaCompile(hdl, NULL, NULL);
 	bnfaPrintInfo(hdl);
+    bnfaPrintSummary();
 #endif
     fclose(fp);
 	return hdl;

@@ -2,6 +2,7 @@
 #define GLOBAL_H
 
 #include <odp.h>
+#include <odph_cuckootable.h>
 #include <odp/helper/linux.h>
 
 #define NIC_NAME_MAX_LEN 64
@@ -27,6 +28,10 @@ typedef struct global_param_s
 typedef struct thread_data_s
 {
     odp_pktio_t nic_hdl[ODP_CONFIG_PKTIO_ENTRIES];
+    odp_pktin_queue_t in_q[ODP_CONFIG_PKTIO_ENTRIES];
+    odp_pktout_queue_t out_q[ODP_CONFIG_PKTIO_ENTRIES];
+    //physical address hash table
+    odph_table_t pa_ht[ODP_CONFIG_PKTIO_ENTRIES];
     odph_linux_pthread_t thr_tbl[ODP_CONFIG_PKTIO_ENTRIES];
 }thread_data_t;
 

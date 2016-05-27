@@ -8,6 +8,7 @@
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <signal.h>
 
 #include <odp.h>
 #include <odp/helper/linux.h>
@@ -22,13 +23,22 @@
 
 #include "ac/sm_builder.h"
 
+//#define USED_CC
+#define CC_LOW 0
+#define CC_HIGH 8
 //#define EXECUTE_CRC
 //#define EXECUTE_HASH_LOOKUP
-//#define EXECUTE_CLASSIFICATION
-#define EXECUTE_DPI
+#define EXECUTE_CLASSIFICATION
+//#define EXECUTE_DPI
 
-#define BUF_SIZE 2048
-#define NB_BUF 8000
+//#define D02_MQ_MODE
+//#define EXECUTE_BUF_CNT
+
+#define BUF_SIZE 1856
+#define NB_BUF 4000
+
+/*control variable*/
+int is_stop = 0;
 
 /***************************/
 global_param_t glb_param;
@@ -95,12 +105,18 @@ odp_pool_t create_pkt_pool(char *name, uint32_t obj_sz, uint32_t elt_num)
 {
     odp_pool_param_t param;
     odp_pool_t pool;
-    memset(&param, 0, sizeof(param));
+    odp_pool_param_init(&param);
     param.type = ODP_POOL_PACKET;
     param.pkt.num = elt_num;
     param.pkt.len = obj_sz;
-    param.pkt.seg_len = PACKET_SEG_LEN;
+    param.pkt.seg_len = obj_sz;
+#ifndef USED_CC
     pool = odp_pool_create(name, &param);
+#else
+    param.colors.start = CC_LOW;
+    param.colors.end = CC_HIGH;
+    pool = odp_pool_create_cc(name, &param);
+#endif
     return pool;
 }
 
@@ -108,7 +124,7 @@ odp_pool_t create_pkt_pool(char *name, uint32_t obj_sz, uint32_t elt_num)
 thread_data_t thr_data;
 port_stat_t port_stat;
 
-odph_hash_t hs_tbl;
+odph_table_t hs_tbl;
 sm_hdl_t *sm_hdl;
 
 int init_all_if()
@@ -119,6 +135,9 @@ int init_all_if()
     uint8_t mac[6];
     uint32_t mtu;
     char pool_name[20];
+    odp_pktio_param_t  param;
+    odp_pktin_queue_param_t inq_param;
+    odp_pktout_queue_param_t outq_param;
 
     for(i = 0; i < glb_param.nic.num; i++)
     {
@@ -128,11 +147,46 @@ int init_all_if()
         {
             return -1;
         }
-        hdl = odp_pktio_open(glb_param.nic.names[i], pkt_pool);
+        odp_pool_print(pkt_pool);
+
+        odp_pktio_param_init(&param);
+        param.in_mode = ODP_PKTIN_MODE_DIRECT;
+        param.out_mode = ODP_PKTOUT_MODE_DIRECT;
+
+        hdl = odp_pktio_open(glb_param.nic.names[i], pkt_pool, &param);
         if(hdl == ODP_PKTIO_INVALID)
         {
             return -1;
         }
+        odp_pktin_queue_param_init(&inq_param);
+        odp_pktout_queue_param_init(&outq_param);
+        inq_param.op_mode = ODP_PKTIO_OP_MT_UNSAFE;
+        inq_param.hash_enable = 1;
+        inq_param.hash_proto.proto.ipv4_udp = 1;
+        inq_param.num_queues = 1;
+        
+        if(odp_pktin_queue_config(hdl, &inq_param)) {
+            fprintf(stderr, "pktin queue config failed!\n");
+            return -1;
+        }
+    
+        outq_param.op_mode = ODP_PKTIO_OP_MT_UNSAFE;
+        outq_param.num_queues = 1;
+        if(odp_pktout_queue_config(hdl, &outq_param)) {
+            fprintf(stderr, "pktout queue config failed!\n");
+            return -1;
+        }
+
+        if(odp_pktin_queue(hdl, &thr_data.in_q[i], 1) != 1) {
+            fprintf(stderr, "acquire pktin queue failed!\n");
+            return -1;
+        }
+
+        if(odp_pktout_queue(hdl, &thr_data.out_q[i], 1) != 1) {
+            fprintf(stderr, "acquire pktout queue failed!\n");
+            return -1;
+        }
+
         if(odp_pktio_mac_addr(hdl, mac, 6) < 0)
         {
             return -1;
@@ -141,23 +195,30 @@ int init_all_if()
         {
             return -1;
         }
-        if(odp_pktio_promisc_mode_set(hdl, 1) < 0)
+        /*if(odp_pktio_promisc_mode_set(hdl, 1) < 0)
+        {
+            return -1;
+        }*/
+        if(odp_pktio_start(hdl) < 0)
         {
             return -1;
         }
-        //if(odp_pktio_start(hdl) < 0)
-        //{
-        //    return -1;
-        //}
+#ifdef EXECUTE_BUF_CNT
+        thr_data.pa_ht[i] = odph_cuckoo_table_create(pool_name, NB_BUF << 1, sizeof(uint64_t), sizeof(uint64_t));
+        if(thr_data.pa_ht[i] == NULL) {
+            fprintf(stderr, "pa hash table create failed in %d if!\n", i);
+            return -1;
+        }
+#endif
         thr_data.nic_hdl[i] = hdl;
-        printf("NIC: %s (MAC:%2x-%2x-%2x-%2x-%2x-%2x, MTU:%u)\n",
+        printf("NIC: %s (MAC:%02x-%02x-%02x-%02x-%02x-%02x, MTU:%u)\n",
                 glb_param.nic.names[i],
                 mac[0], mac[1], mac[2],
                 mac[3], mac[4], mac[5],
                 mtu);
-        struct odp_pktio_eth_link link;
-        odp_pktio_link_get(hdl, &link);
-        printf("iface %s %s\n", glb_param.nic.names[i], link.link_status == 1 ? "up" : "down");
+        //struct odp_pktio_eth_link link;
+        //odp_pktio_link_get(hdl, &link);
+        printf("iface %s %s\n", glb_param.nic.names[i], odp_pktio_link_status(hdl) == 1 ? "up" : odp_pktio_link_status(hdl) == 0 ? "down" : "failed");
     }
     return 0;
 }
@@ -252,11 +313,55 @@ void* thread_fwd_routine(void *arg)
     printf("fwd thread %d start(on cpu %d)\n", odp_thread_id(), odp_cpu_id());
     //match to port id
 
+    odp_pktio_t pktio = thr_data.nic_hdl[thr_id];
+    odp_pktin_queue_t inq = thr_data.in_q[thr_id];
+    odp_pktout_queue_t outq = thr_data.out_q[thr_id];
+#ifdef EXECUTE_BUF_CNT
+    odph_table_t pa_ht = thr_data.pa_ht[thr_id];
+#endif
+
+    printf("inq %llx %d, outq %llx %d\n", (unsigned long long)inq.pktio, inq.index, (unsigned long long)outq.pktio, outq.index);
+
     memset(&port_stat.stat[thr_id], 0 , 3 * sizeof(uint64_t));
-    for(;;)
+
+    int find_queue = 0;
+    while (!is_stop)
     {
-        rv_nb = odp_pktio_recv(thr_data.nic_hdl[thr_id], pkt_tbl, 
+#ifndef D02_MQ_MODE
+        rv_nb = odp_pktio_recv(pktio, pkt_tbl, PACKET_IO_BURST);
+#else
+        rv_nb = odp_pktio_recv_queue(inq, pkt_tbl, 
                 PACKET_IO_BURST);
+        inq.index = inq.index >= 15 ? 0 : inq.index + 1;
+#endif
+        /*if(rv_nb > 0) {
+            find_queue = 1;
+        } else {
+            if(!find_queue) {
+                inq.index = inq.index >= 15 ? 0 : inq.index + 1;
+            }
+            continue;
+        }*/
+        if (rv_nb <= 0) {
+            continue;
+        }
+
+#ifdef EXECUTE_BUF_CNT
+        for(i = 0; i < rv_nb; i++) {
+            odp_packet_seg_t seg = odp_packet_first_seg(pkt_tbl[i]);
+            uint64_t paddr = (uint64_t)odp_v2p((void*)seg);
+            uint64_t counter;
+            if(odph_cuckoo_table_get_value(pa_ht, &paddr, &counter, sizeof(counter)) == -1) {
+                counter = 1;
+            } else {
+                counter++;
+            }
+            if(odph_cuckoo_table_put_value(pa_ht, &paddr, &counter) == -1) {
+                fprintf(stderr, "thr %d put pa %llx (%lld) failed!\n", thr_id, (unsigned long long)paddr, (unsigned long long)counter);
+            }
+        }
+#endif
+
         port_stat.stat[thr_id].recv += rv_nb;
 #ifdef EXECUTE_CRC
         for(i = 0; i < rv_nb; i++)
@@ -319,8 +424,11 @@ void* thread_fwd_routine(void *arg)
             memcpy(eth->dst.addr, eth->src.addr, 6);
             memcpy(eth->src.addr, smac, 6);
         }
-
-        sd_nb = odp_pktio_send(thr_data.nic_hdl[out_port], pkt_tbl, rv_nb);
+#ifndef D02_MQ_MODE
+        sd_nb = odp_pktio_send(pktio, pkt_tbl, rv_nb);
+#else
+        sd_nb = odp_pktio_send_queue(outq, pkt_tbl, rv_nb);
+#endif
         port_stat.stat[thr_id].send += sd_nb;
         while(sd_nb < rv_nb)
         {
@@ -337,7 +445,7 @@ void* thread_fwd_routine(void *arg)
 void* thread_stat_routine(void *arg)
 {
     int i;
-    while(1)
+    while (!is_stop)
     {
         sleep(5);
         i = system("clear");
@@ -352,6 +460,19 @@ void* thread_stat_routine(void *arg)
         }
     }
 }
+
+#ifdef EXECUTE_BUF_CNT
+static void sig_hdl(int sig) {
+    is_stop = 1;
+    printf("sigint executed by cpu %d\n", odp_cpu_id());
+}
+
+static void write_pa() {
+    
+}
+#endif
+/**/
+
 
 int main(int argc, char **argv)
 {
@@ -368,11 +489,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "local init failure!\n");
         exit(EXIT_FAILURE);
     }
+#ifdef EXECUTE_BUF_CNT
+    signal(SIGUSR1, sig_hdl);
+#endif
 
     parse_param(argc, argv);
 
     packet_classifier_init(glb_param.rule_file, glb_param.fib_file);
-    hash_env_init();
+    //hash_env_init();
     sm_hdl = sm_build(glb_param.pat_file);
 
     hs_tbl = create_hash_table();
@@ -385,7 +509,7 @@ int main(int argc, char **argv)
 
     odph_linux_pthread_t thr_tbl[ODP_CONFIG_PKTIO_ENTRIES];
     int thr_num;
-    thr_num = odph_linux_pthread_create(thr_tbl, &glb_param.cpu_mask, thread_fwd_routine, NULL);
+    thr_num = odph_linux_pthread_create(thr_tbl, &glb_param.cpu_mask, thread_fwd_routine, NULL, ODP_THREAD_WORKER);
     if(thr_num != glb_param.nic.num)
     {
         fprintf(stderr, "some nic thread start failure!\n");
@@ -397,7 +521,7 @@ int main(int argc, char **argv)
 
     odp_cpumask_zero(&thr_stat_mask);
     odp_cpumask_set(&thr_stat_mask, glb_param.nic.num);
-    if(odph_linux_pthread_create(&thr_stat_hdl, &thr_stat_mask, thread_stat_routine, NULL) != 1)
+    if(odph_linux_pthread_create(&thr_stat_hdl, &thr_stat_mask, thread_stat_routine, NULL, ODP_THREAD_WORKER) != 1)
     {
         fprintf(stderr, "stat thread start failure!\n");
         exit(EXIT_FAILURE);
@@ -406,6 +530,9 @@ int main(int argc, char **argv)
     odph_linux_pthread_join(thr_tbl, thr_num);
     odph_linux_pthread_join(&thr_stat_hdl, 1);
 
+#ifdef EXECUTE_BUF_CNT
+    write_pa();
+#endif
 
     int nic_id;
     for(nic_id = 0; nic_id < glb_param.nic.num; nic_id++)
@@ -413,7 +540,7 @@ int main(int argc, char **argv)
         odp_pktio_close(thr_data.nic_hdl[nic_id]);
     }
     sm_destroy(sm_hdl);
-    odph_hash_free(hs_tbl);
+    odph_cuckoo_table_destroy(hs_tbl);
 
     odp_term_local();
     odp_term_global();
