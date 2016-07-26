@@ -24,6 +24,17 @@ odph_table_t create_hash_table(void)
             fprintf(stderr, "hash table insert failed on %d!\n", i);
         }
     }
+
+#if 0
+    void *k, *v;
+    uint32_t next;
+    int ret;
+    do {
+        ret = odph_cuckoo_table_iterate(hash_table, &k, &v, &next);
+        printf("%u %c\n",((uint32_t*)k)[0], *((char*)v));
+    } while(ret != -1);
+#endif
+
     return hash_table;
 }
 

@@ -24,8 +24,8 @@
 #include "ac/sm_builder.h"
 
 //#define USED_CC
-#define CC_LOW 0
-#define CC_HIGH 8
+//#define CC_LOW 0
+//#define CC_HIGH 16
 //#define EXECUTE_CRC
 //#define EXECUTE_HASH_LOOKUP
 #define EXECUTE_CLASSIFICATION
@@ -66,16 +66,34 @@ void parse_ifs(char *str)
     glb_param.nic.num = i;
 }
 
+void parse_colors(char *str) {
+    char *s, *sp, *tok[ODP_CONFIG_PKTIO_ENTRIES];
+    int i, j;
+    for(i = 0, s = str;;)
+    {
+        tok[i] = strtok_r(s, ",", &sp);
+        s = NULL;
+        if(tok[i] == NULL)
+        {
+            break;
+        }
+        glb_param.colors[i / 2].c[i % 2] = strtoul(tok[i], NULL, 0);
+        i++;
+    }
+}
+
 void parse_param(int argc, char **argv)
 {
     int ch;
-    while((ch = getopt(argc, argv, "i:r:l:k:")) != -1)
+    while((ch = getopt(argc, argv, "i:r:l:k:c:")) != -1)
     {
         switch(ch)
         {
+            case 'c':
+                parse_colors(optarg);
+                break;
             case 'i':
                 parse_ifs(optarg);
-
                 //1:1 thread:nic
                 int i;
                 odp_cpumask_zero(&glb_param.cpu_mask);
@@ -101,6 +119,7 @@ void parse_param(int argc, char **argv)
 }
 
 /***********************/
+#ifndef USED_CC
 odp_pool_t create_pkt_pool(char *name, uint32_t obj_sz, uint32_t elt_num)
 {
     odp_pool_param_t param;
@@ -110,15 +129,25 @@ odp_pool_t create_pkt_pool(char *name, uint32_t obj_sz, uint32_t elt_num)
     param.pkt.num = elt_num;
     param.pkt.len = obj_sz;
     param.pkt.seg_len = obj_sz;
-#ifndef USED_CC
     pool = odp_pool_create(name, &param);
-#else
-    param.colors.start = CC_LOW;
-    param.colors.end = CC_HIGH;
-    pool = odp_pool_create_cc(name, &param);
-#endif
     return pool;
 }
+#else
+odp_pool_t create_pkt_pool(char *name, uint32_t obj_sz, uint32_t elt_num, int low, int high)
+{
+    odp_pool_param_t param;
+    odp_pool_t pool;
+    odp_pool_param_init(&param);
+    param.type = ODP_POOL_PACKET;
+    param.pkt.num = elt_num;
+    param.pkt.len = obj_sz;
+    param.pkt.seg_len = obj_sz;
+    param.colors.start = low;
+    param.colors.end = high;
+    pool = odp_pool_create_cc(name, &param);
+    return pool;
+}
+#endif
 
 /***********************/
 thread_data_t thr_data;
@@ -142,7 +171,11 @@ int init_all_if()
     for(i = 0; i < glb_param.nic.num; i++)
     {
         snprintf(pool_name, 20, "%s_pool", glb_param.nic.names[i]);
+#ifndef USED_CC
         pkt_pool = create_pkt_pool(pool_name, BUF_SIZE, NB_BUF);
+#else
+        pkt_pool = create_pkt_pool(pool_name, BUF_SIZE, NB_BUF, glb_param.colors[i].c[0], glb_param.colors[i].c[1]);
+#endif
         if(pkt_pool == ODP_POOL_INVALID)
         {
             return -1;
@@ -164,12 +197,12 @@ int init_all_if()
         inq_param.hash_enable = 1;
         inq_param.hash_proto.proto.ipv4_udp = 1;
         inq_param.num_queues = 1;
-        
+
         if(odp_pktin_queue_config(hdl, &inq_param)) {
             fprintf(stderr, "pktin queue config failed!\n");
             return -1;
         }
-    
+
         outq_param.op_mode = ODP_PKTIO_OP_MT_UNSAFE;
         outq_param.num_queues = 1;
         if(odp_pktout_queue_config(hdl, &outq_param)) {
@@ -196,15 +229,17 @@ int init_all_if()
             return -1;
         }
         /*if(odp_pktio_promisc_mode_set(hdl, 1) < 0)
-        {
-            return -1;
-        }*/
+          {
+          return -1;
+          }*/
         if(odp_pktio_start(hdl) < 0)
         {
             return -1;
         }
 #ifdef EXECUTE_BUF_CNT
-        thr_data.pa_ht[i] = odph_cuckoo_table_create(pool_name, NB_BUF << 1, sizeof(uint64_t), sizeof(uint64_t));
+        char pa_name[256];
+        snprintf(pa_name, 256, "paddr_table_%d", i);
+        thr_data.pa_ht[i] = odph_cuckoo_table_create(pa_name, NB_BUF << 1, sizeof(uint64_t), sizeof(uint64_t));
         if(thr_data.pa_ht[i] == NULL) {
             fprintf(stderr, "pa hash table create failed in %d if!\n", i);
             return -1;
@@ -335,13 +370,13 @@ void* thread_fwd_routine(void *arg)
         inq.index = inq.index >= 15 ? 0 : inq.index + 1;
 #endif
         /*if(rv_nb > 0) {
-            find_queue = 1;
-        } else {
-            if(!find_queue) {
-                inq.index = inq.index >= 15 ? 0 : inq.index + 1;
-            }
-            continue;
-        }*/
+          find_queue = 1;
+          } else {
+          if(!find_queue) {
+          inq.index = inq.index >= 15 ? 0 : inq.index + 1;
+          }
+          continue;
+          }*/
         if (rv_nb <= 0) {
             continue;
         }
@@ -468,7 +503,62 @@ static void sig_hdl(int sig) {
 }
 
 static void write_pa() {
-    
+    odph_table_t total, iter;
+    void *key, *data;
+    uint64_t newdata;
+    FILE *fp;
+    char file_name[256];
+    uint32_t next;
+    printf("start writing addr!\n");
+    total = odph_cuckoo_table_create("paddr_total", NB_BUF << 1, sizeof(uint64_t), sizeof(uint64_t));
+    if (total == NULL) {
+        fprintf(stderr, "create total paddr table failed!\n");
+        exit(-1);
+    }
+    int i;
+    for (i = 0; i < glb_param.nic.num; i++) {
+        iter = thr_data.pa_ht[i];
+        if (iter == NULL) {
+            fprintf(stderr, "paddr table of thr %d is NULL\n", i);
+            exit(-1);
+        }
+        snprintf(file_name, 256, "paddr/paddr_if_%d", i);
+        fp = fopen(file_name, "w");
+        if (fp == NULL) {
+            fprintf(stderr, "open paddr record file failed in %d\n", i);
+            exit(-1);
+        }
+
+        next = 0;
+        while(odph_cuckoo_table_iterate(iter, &key, &data, &next) != -1) {
+            if (odph_cuckoo_table_get_value(total, key, &newdata, sizeof(newdata)) != -1) {
+                newdata += *((uint64_t*)data);
+            } else {
+                newdata = *(uint64_t*)data;
+            }
+            if (odph_cuckoo_table_put_value(total, key, &newdata) == -1) {
+                fprintf(stderr, "total paddr table put key %llx failed\n", *(unsigned long long*)key);
+                exit(-1);
+            }
+            fprintf(fp, "paddr: %llx, count: %llu\n", *(unsigned long long*)key, *(unsigned long long*)data);
+        }
+        fflush(fp);
+        fclose(fp);
+    }
+
+    fp = fopen("paddr/paddr_total", "w");
+    if (fp == NULL) {
+        fprintf(stderr, "open paddr record total failed\n", i);
+        exit(-1);
+    }
+
+    next = 0;
+    while(odph_cuckoo_table_iterate(total, &key, &data, &next) != -1) {
+        fprintf(fp, "paddr: %llx, count: %llu\n", *(unsigned long long*)key, *(unsigned long long*)data);
+    }
+    fflush(fp);
+    fclose(fp);
+
 }
 #endif
 /**/
@@ -490,7 +580,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 #ifdef EXECUTE_BUF_CNT
-    signal(SIGUSR1, sig_hdl);
+    signal(SIGINT, sig_hdl);
 #endif
 
     parse_param(argc, argv);

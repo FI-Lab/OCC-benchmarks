@@ -16,6 +16,11 @@ typedef struct global_param_s
         char names[ODP_CONFIG_PKTIO_ENTRIES][NIC_NAME_MAX_LEN];
     }nic;
 
+    struct {
+        //c[0] = low, c[1] = high
+        int c[2];
+    }colors[ODP_CONFIG_PKTIO_ENTRIES];
+
     odp_cpumask_t cpu_mask;
 
     char rule_file[REGULAR_FILE_NAME_MAX_LEN];
